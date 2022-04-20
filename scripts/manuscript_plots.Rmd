@@ -1,0 +1,1971 @@
+---
+title: "Manuscript_plots"
+author: "Helen K."
+date: "6/14/2021"
+output: html_document
+---
+
+```{r setup, echo=F, message=FALSE, warning=FALSE}
+
+load("./Validation_clustering.RData")
+knitr::opts_chunk$set(include = FALSE)
+library('dplyr')
+library('ggplot2')
+library("ggtext")
+library("patchwork")
+library("DESeq2")
+library("extrafont")
+library("remotes")
+library("tidyr")
+library("PCAtools")
+## For proper functiong of extrafont
+# remotes::install_version("Rttf2pt1", version = "1.3.8")
+# font_import()
+# fonts()
+# loadfonts(device="postscript") #This is for Plos
+loadfonts()
+
+
+## Function
+
+# Modified DESeq2 plotCounts function. Takes in gene name and plots gene trajectories from both datasets. Includes LRT test results for coloring based on significance.
+
+plotcounts_both_rsem_log_with_significance<-function(gene="ENSG00000109320"){
+  dat1<- plotCounts(dds_TBX, gene=gene, intgroup=c("clones", "condition", "replicate"), returnData = T)
+  dat2<- plotCounts(dds_TBJ, gene=gene, intgroup=c("clones", "condition", "replicate"), returnData = T)
+  plot_object <- rbind(dat2, dat1) %>%
+    mutate(clones=recode(clones, TBX4B="TBX4B", TBJ360="3.60"))
+  plot_object$significance <- ifelse(gene %in% dds_res_sig_TBJ, "3.60", "3.60 (ns)")
+  plot_object[plot_object$clones=="TBX4B",]$significance <- ifelse(gene %in% dds_res_TBX_sig, "TBX4B", "TBX4B (ns)")
+    plot_object %>%
+      ggplot(aes(x=condition, y=count, fill=significance, color=significance, shape=significance)) +
+      geom_point(aes(color=significance, fill=significance, shape=significance), size=3)+
+      geom_line(aes(color=significance, group=significance),stat = "summary",
+                fun = "median", size=0.25) +
+      scale_color_manual(values=c("3.60"="#3ACCE0", "TBX4B"="#D12335","TBX4B (ns)"="#D12335", "3.60 (ns)"="#3ACCE0"))+
+      scale_fill_manual(values=c("3.60"="#3ACCE0", "TBX4B"="#D12335","TBX4B (ns)"="white", "3.60 (ns)"="white" ))+
+      scale_shape_manual(values=(c("3.60"=21, "TBX4B"=24,"TBX4B (ns)"=24, "3.60 (ns)"=21)))+
+    theme_bw() +
+    scale_y_log10()+
+      labs(y="<span style='font-size:12pt'>Normalized counts</span>",
+           subtitle=paste(c(gene_names_rsem$hgnc_symbol[gene_names_rsem$ensembl_gene_id == gene])))+
+    theme(plot.title=element_text(size=12),
+          plot.subtitle = element_text(),
+          axis.title.y=element_markdown(),
+          axis.title.x=element_blank(),
+          axis.text = element_text(size = 12),
+          legend.text = element_text(size = 12),
+          legend.title = element_text(size = 12),
+          text=element_text(family="Arial", size=12))+
+      guides(color=guide_legend("Clones"), 
+             shape=guide_legend("Clones"),
+             fill=guide_legend("Clones"))
+}
+
+# Modified DESeq2 plotCounts function. Takes in gene name and plots gene trajectories from both datasets. Without significance coloring; only used for genes, which are significant in order to have appropriate legend information
+
+plotcounts_both_rsem_log<-function(gene="ENSG00000109320"){
+  dat1<- plotCounts(TBX_dds_rsem_deseq_design, gene=gene, intgroup=c("clones", "condition", "replicate"), returnData = T)
+  dat2<- plotCounts(TBJ_dds_rsem_deseq_design, gene=gene, intgroup=c("clones", "condition", "replicate"), returnData = T)
+  plot_object <- rbind(dat2, dat1) %>%
+    mutate(clones=recode(clones, TBX4B="TBX4B", TBJ360="3.60"))
+    plot_object %>%
+      ggplot(aes(x=condition, y=count, fill=clones)) +
+    geom_point(aes(color=clones, fill=clones, shape=clones), size=3)+
+    geom_line(aes(color=clones, group=clones),stat = "summary",
+            fun = "median", size=0.25) +
+    scale_color_manual(name="clones", values=c("3.60"="#3ACCE0", "TBX4B"="#D12335"))+
+    theme_bw() +
+    scale_y_log10()+
+      labs(y="<span style='font-size:12pt'>Normalized counts</span>",
+           subtitle=paste(c(gene_names_rsem$hgnc_symbol[gene_names_rsem$ensembl_gene_id == gene])))+
+    theme(plot.title=element_text(size=12),
+          plot.subtitle = element_text(),
+          axis.title.y=element_markdown(),
+          axis.title.x=element_blank(),
+          axis.text = element_text(size = 12),
+          legend.text = element_text(size = 12),
+          legend.title = element_text(size = 12),
+          text=element_text(family="Arial", size=12))+
+      guides(color=guide_legend("Clones"), 
+             shape=guide_legend("Clones"),
+             fill=guide_legend("Clones"))
+}
+
+```
+
+
+# PCA {.tabset .tabset-pills}
+
+```{r echo=, fig.height=4, fig.width=10, message=FALSE, warning=FALSE}
+vst_TBJ_dds_pca<-vst_TBJ_dds
+
+# Change rownames.
+rownames(vst_TBJ_dds_pca) <- gene_names_rsem$hgnc_symbol[match(rownames(vst_TBJ_dds_pca), gene_names_rsem$ensembl_gene_id)]
+
+# Only include unique genes.
+vst_TBJ_dds_pca <-assay(vst_TBJ_dds_pca[unique(row.names(vst_TBJ_dds_pca)),])
+
+# Order input.
+input <- order(-rowVars((vst_TBJ_dds_pca)))
+input<-(vst_TBJ_dds_pca)[input,]
+
+# Extract correct sample info and format input.
+input_sample_info_tbj <-sample_info[9:16,]
+colnames(input) <- unlist(lapply((strsplit(colnames(input), "_")), "[", 2))
+row.names(input_sample_info_tbj)<-unlist(lapply((strsplit(row.names(input_sample_info_tbj), "_")), "[", 2))
+p1<-pca(input, input_sample_info_tbj, center=T, scale=F)
+
+
+condition_colors <- c("DN"="grey39",
+                      "Blue"="steelblue1",
+                      "DP"="mediumpurple1",
+                      "Red"="firebrick1")
+
+
+biplot_tbj <- biplot(p1,
+       labSize =5, 
+       colby = "condition",
+       colkey = condition_colors,
+       axisLabSize=14, 
+       shape="condition",
+       shapekey = c("DN"=16,
+                    "Blue"=16,
+                    "DP"=16,
+                    "Red"=16),
+       borderWidth = 0.3,
+       subtitle = "Clone 3.60 PCA bi-plot",
+       subtitleLabSize = 14)+ 
+  geom_point(shape=1, size=3) +
+  theme(panel.grid.minor = element_blank(),
+        axis.ticks = element_line(size=0.5),
+        text=element_text(family="Arial", size=12))
+
+
+
+vst_TBX_dds_pca<-vst_TBX_dds
+rownames(vst_TBX_dds_pca) <- gene_names_rsem$external_gene_name[match(rownames(vst_TBX_dds_pca), gene_names_rsem$ensembl_gene_id)]
+vst_TBX_dds_pca <-assay(vst_TBX_dds_pca[unique(row.names(vst_TBX_dds_pca)),])
+
+input <- order(-rowVars((vst_TBX_dds_pca)))
+input<-(vst_TBX_dds_pca)[input,]
+input_sample_info_tbx <-sample_info[9:16,]
+colnames(input) <- unlist(lapply((strsplit(colnames(input), "_")), "[", 2))
+row.names(input_sample_info_tbx)<-unlist(lapply((strsplit(row.names(input_sample_info_tbx), "_")), "[", 2))
+p2<-pca(input, input_sample_info_tbx, center=T, scale=F)
+
+
+
+biplot_tbx <- biplot(p2,
+       labSize = 5, 
+       colby = "condition",
+       borderWidth = 0.3,
+       colkey = condition_colors,
+       axisLabSize=14,
+       subtitleLabSize = 14,
+       shape="condition",
+       shapekey = c("DN"=17,
+                    "Blue"=17,
+                    "DP"=17,
+                    "Red"=17),
+       subtitle = "Clone TBX4B PCA bi-plot") + 
+  geom_point(shape=2, size=3)+
+  theme(panel.grid.minor = element_blank(),
+        axis.ticks = element_line(size=0.5),
+        text=element_text(family="Arial", size=12))
+
+
+plot_legend_figure_data <- data.frame("Phase"=factor(c("DN", "Blue", "DP", "Red"), levels=c("DN", "Blue", "DP", "Red")), "Scale"=c(5, 5, 5, 5))
+
+fig_legend <- ggplot(plot_legend_figure_data) + 
+  geom_col(aes(x=Phase, y=Scale),color="black",fill="white", alpha=0.7) + 
+  theme_bw() +
+  geom_text(aes(x=Phase, y=Scale),label=c("SILENT", "EARLY", "MID", "LATE"),nudge_y = -2.5, size=5, angle=90, fontface="bold")+
+  labs(title="<span style='font-size:12pt'>Figure Guide</span>",
+       x="<span style='font-size:12pt'>Timer protein phase</span>",
+       y="<span style='font-size:12pt'>Normalized counts<br>on log<sub>10</sub>-scale</span>")+
+  theme(plot.title=element_textbox_simple(linetype = 1,
+                                          padding = margin(5, 5, 5, 5),
+                                          r = grid::unit(3, "pt"),
+                                          margin = margin(0, 0, 5, 0),
+                                          hjust = 0,
+                                          linewidth = 0.3,
+                                          fill="#ffead1",
+                                          family="Arial"),
+        axis.title.y=element_markdown(family="Arial"),
+        axis.title.x=element_markdown(family="Arial"),
+        axis.text = element_text(size = 12),
+        text=element_text(family="Arial", size=12),
+        legend.position = "none")
+biplot_tbj+biplot_tbx
+fig_legend
+```
+
+
+
+
+# Fig 2 - Validation pics
+
+```{r echo=F, fig.height=11, fig.width=11}
+
+
+
+validation_gene_plots<-((fig_legend|
+     (plotcounts_both_rsem_log("HTLVplus"))+theme(axis.title.y=element_blank())|
+  plotcounts_both_rsem_log("HTLVminus")+theme(axis.title.y=element_blank())|
+    plotcounts_both_rsem_log("Timer_protein")+theme(axis.title.y=element_blank()))/(plotcounts_both_rsem_log("ENSG00000162924")+theme(axis.title.y=element_blank())|
+                 plotcounts_both_rsem_log("ENSG00000104856")+theme(axis.title.y=element_blank())|
+                 plotcounts_both_rsem_log("ENSG00000109320")+theme(axis.title.y=element_blank())|
+                  plotcounts_both_rsem_log("ENSG00000077150")+theme(axis.title.y=element_blank()))/
+                 (plotcounts_both_rsem_log("ENSG00000134460")+theme(axis.title.y=element_blank())|
+                 plotcounts_both_rsem_log("ENSG00000169194")+theme(axis.title.y=element_blank())|
+                  plotcounts_both_rsem_log("ENSG00000130522")+theme(axis.title.y=element_blank())|
+                 plotcounts_both_rsem_log("ENSG00000182866")+theme(axis.title.y=element_blank())))+plot_layout(guides = 'collect')
+
+biplots<-biplot_tbj+biplot_tbx
+
+
+# pdf("./images/Fig2.pdf", height = 11, width = 11,
+#            family = "Arial", fonts="Arial", paper = "special", onefile = FALSE)
+# validation_gene_plots/biplots + plot_layout(heights=c(1, 1, 1, 1.5 ))+plot_annotation(tag_levels = list(c('A', '', '', '', '', '', '', '', '', '', '', '', 'B')))
+# dev.off()
+validation_gene_plots/biplots + plot_layout(heights=c(1, 1, 1, 1.5 ))+plot_annotation(tag_levels = list(c('A', '', '', '', '', '', '', '', '', '', '', '', 'B')))
+```
+
+
+# Clone-wise kmeans clustering
+
+## Format 3.60 input
+
+```{r echo=F}
+# Clustering data for plotting from load("./Validation_clustering.RData") as run in the beginning of the markdown file
+k<-2
+TBJ_gene_cluster <- TBJ_genes_in_clusters
+# Column to show how many genes in a cluster
+for(i in 1:k){
+  TBJ_gene_cluster$cluster[(TBJ_gene_cluster$cluster == i)] <- paste0(TBJ_gene_cluster$cluster[(TBJ_gene_cluster$cluster == i)],": ", sum(TBJ_gene_cluster$cluster==i), " genes")
+}
+
+
+
+# Re-format the raw input to join count values with sample info - so the count values could be added to clusters for plotting later down the line. 
+
+tbj_clustering_long<-as.data.frame(tbj_clustering_input) %>%
+  tibble::rownames_to_column(var="gene")%>%
+  pivot_longer(cols=c(2:9), 
+               names_to = "sample", 
+               values_to = "cts")%>%
+  full_join(sample_info[9:16,], by=("sample"))
+
+# Z-score and summarize the count values to their mean
+tbj_clustering_mean_counts <- tbj_clustering_long %>% 
+  group_by(gene) %>%
+  mutate(cts_scaled=(cts-mean(cts))/sd(cts))%>%
+  group_by(gene, condition) %>% 
+  summarise(mean_cts_scaled = mean(cts_scaled)) %>% 
+  ungroup()
+
+# Join mean counts with clustering information
+
+TBJ_mean_counts_clusters_joined <- tbj_clustering_mean_counts %>% 
+  inner_join(TBJ_gene_cluster, by = "gene")
+
+# For each cluster list the top 10 most significantly differentially expressed gene from the LRT results.
+
+representative_labels <- TBJ_genes_in_clusters
+
+# Empty variable
+text_label_gene<-c()
+# Fill that empty variable
+for(i in 1:k){
+  names <- (head(representative_labels[(representative_labels$cluster == i),], n=10))
+  text_label_gene <- c(text_label_gene, names$gene)
+}
+
+# Join the labels with the cluster information
+
+trajectory_labels_tbj <- data.frame("gene"=text_label_gene) %>% 
+  inner_join(TBJ_gene_cluster, by = "gene")
+
+# Create positional values - these are arbitrary and only used for plotting gene names outside the main area of the plot.
+
+trajectory_labels_tbj$mean_cts_scaled<-(-seq(-1.5, 1.5, 0.32))
+trajectory_labels_tbj$x<-4.6
+
+# Sometimes the clustering can change order of clusters; make sure that the up-regulated cluster i.e the one where trajectories include genes like HTLV-1 plus and Timer, is named "1: 5610 genes". Otherwise re-format for plotting
+mean_cols<-c("1: 5610 genes"="orange2", "2: 4438 genes"="royalblue")
+
+trajectories_tbj <- TBJ_mean_counts_clusters_joined %>% 
+  ggplot(aes(condition, mean_cts_scaled, label=gene, color = cluster)) +
+  geom_line(aes(group = gene), alpha = 0.3, color="black") +
+  geom_line(stat = "summary", 
+            fun = "median", 
+            size = 1.5, 
+            aes(group = 1)) + 
+  scale_color_manual(name="Genes in cluster", values=mean_cols)+
+  geom_text(data=trajectory_labels_tbj,
+            aes(x=x, y=mean_cts_scaled, label=gene), 
+            inherit.aes = FALSE, 
+            size = 3.5)+
+  scale_x_discrete(expand = c(c(0.05, 0), c(0,1.1)))+
+  facet_wrap( facets = vars(cluster), ncol = 1) + 
+  ggtitle("Clone 3.60 k-means clusters") + 
+  theme_bw()+
+  xlab("Timer Protein phase") +
+  ylab("Expression Z-score")+
+  theme(plot.title=element_text(size=12),
+        axis.text = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.title.x = element_text(size = 12),
+        legend.position = "none",
+        text=element_text(family="Arial", size=12))
+
+```
+
+### MsigDB encrichment plot 1: 3.60.
+
+```{r echo=F, fig.height=2.3, fig.width=6.5}
+plot1.2<- cluster1_tbj_gprofiler$result %>%
+  subset(source == "h.all.v7.2.symbols")%>%
+  mutate(genes_in_term = paste0(intersection_size, " / ", term_size))%>%
+  mutate(terms=substr(term_id, 10, 100000))%>%
+  ggplot(aes(reorder(terms, -p_value), 
+                     -log10(p_value))) +
+  geom_col(fill="orange2", width=0.7) +  
+  coord_flip() +
+  scale_y_continuous(limits = c(0, 30))+
+  labs(y="-log10(adjusted p-value)",
+       title="Clone 3.60 cluster 1") + 
+  theme_bw()+ 
+  theme(text=element_text(family="Arial",size=12),
+        panel.grid.minor = element_blank(),
+        plot.title=element_text(size=12),
+        axis.title.y = element_blank())+ 
+  geom_text(aes(label=(genes_in_term)),
+            size = 4,
+            hjust = -0.1,
+            position = "stack")
+
+
+
+
+plot1.2
+```
+
+### MsigDB enrichment plot 2: 3.60.
+
+```{r echo=F, fig.height=2.3, fig.width=6.5}
+plot2.2<- cluster2_tbj_gprofiler$result %>%
+  subset(source == "h.all.v7.2.symbols")%>%
+  mutate(genes_in_term = paste0(intersection_size, " / ", term_size))%>%
+  mutate(terms=substr(term_id, 10, 100000))%>%
+  ggplot(aes(reorder(terms, -p_value), 
+                     -log10(p_value))) +
+  geom_col(fill="royalblue", width=0.7) +  
+  coord_flip() +
+  scale_y_continuous(limits = c(0, 10))+
+  labs(title="Clone 3.60 cluster 2",
+       y="-log10(adjusted p-value)") +
+  theme_bw()+ 
+  theme(text=element_text(family="Arial",size=12),
+        panel.grid.minor = element_blank(),
+        plot.title=element_text(size=12),
+        axis.title.y = element_blank())+ 
+  geom_text(aes(label=(genes_in_term)),
+            size = 4,
+            hjust = -0.1,
+            position = "stack")
+
+
+
+
+plot2.2
+```
+
+## 3.60 plots joined
+
+```{r echo=F, fig.height=5, fig.width=10}
+trajectories_tbj+(plot1.2/plot2.2)+plot_annotation(tag_levels = list(c('A', 'B')))+plot_layout(widths=c(1.8, 1))
+
+```
+
+## Format TBX4B input
+
+```{r echo=F}
+ 
+TBX_gene_cluster <- TBX_genes_in_clusters
+k<-2
+for(i in 1:k){
+  TBX_gene_cluster$cluster[(TBX_gene_cluster$cluster == i)] <- paste0(TBX_gene_cluster$cluster[(TBX_gene_cluster$cluster == i)],": ", sum(TBX_gene_cluster$cluster==i), " genes")
+}
+
+
+
+tbx_clustering_long<-as.data.frame(tbx_clustering_input) %>%
+  tibble::rownames_to_column(var="gene")%>%
+  pivot_longer(cols=c(2:9), 
+               names_to = "sample", 
+               values_to = "cts")%>%
+  full_join(sample_info[1:8,], by=("sample"))
+
+
+
+tbx_clustering_mean <- tbx_clustering_long %>% 
+  group_by(gene) %>%
+  mutate(cts_scaled=(cts-mean(cts))/sd(cts))%>%
+  group_by(gene, condition) %>% 
+  summarise(mean_cts_scaled = mean(cts_scaled)) %>% 
+  ungroup()
+
+
+
+trans_cts_cluster2_tbx <- tbx_clustering_mean %>% 
+  inner_join(TBX_gene_cluster, by = "gene")
+
+
+representative_labels_tbx <- TBX_genes_in_clusters
+
+
+text_label_gene<-c()
+for(i in 1:k){
+  names <- (head(representative_labels_tbx[(representative_labels_tbx$cluster == i),], n=10))
+  text_label_gene <- c(text_label_gene, names$gene)
+}
+
+trajectory_labels_tbx <- data.frame("gene"=text_label_gene) %>% 
+  inner_join(TBX_gene_cluster, by = "gene")
+
+trajectory_labels_tbx$mean_cts_scaled<-(-seq(-1.5, 1.5, 0.32))
+trajectory_labels_tbx$x<-4.6
+
+# Same as before, make sure up-regulated cluster has 2725 genes and is colored orange. The clustering in the script Validation_clustering.Rmd sometimes labels the clusters differently, although the clustering is the same.
+mean_cols<-c("1: 2725 genes"="orange2", "2: 2073 genes"="royalblue")
+
+
+trajectories_tbx <- trans_cts_cluster2_tbx %>% 
+  ggplot(aes(condition, mean_cts_scaled, label=gene, color = cluster)) +
+  geom_line(aes(group = gene), alpha = 0.3, color="black") +
+  geom_line(stat = "summary", 
+            fun = "median", 
+            size = 1.5, 
+            aes(group = 1)) + 
+  scale_color_manual(name="Genes in cluster", values=mean_cols)+
+  geom_text(data=trajectory_labels_tbx,
+            aes(x=x, y=mean_cts_scaled, label=gene), 
+            inherit.aes = FALSE, 
+            size = 3.5)+  
+  scale_x_discrete(expand = c(c(0.05, 0), c(0,1.1)))+
+  facet_wrap( facets = vars(cluster), ncol = 1) + 
+  ggtitle("Clone TBX4B k-means clusters") + 
+  theme_bw()+
+  xlab("Timer Protein phase") +
+  ylab("Expression Z-score")+
+  theme(plot.title=element_text(size=12),
+        axis.text = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.title.x = element_text(size = 12),
+        legend.position = "none",
+        text=element_text(family="Arial", size=12))
+
+```
+
+### MsigDB enrichment plot 1: TBX4B.
+
+```{r echo=F, fig.height=3.5, fig.width=7}
+tbx_plot1.2<- cluster1_tbx_gprofiler$result %>%
+  subset(source == "h.all.v7.2.symbols")%>%
+  mutate(genes_in_term = paste0(intersection_size, " / ", term_size))%>%
+  mutate(terms=substr(term_id, 10, 100000))%>%
+  ggplot(aes(reorder(terms, -p_value), 
+                     -log10(p_value))) +
+  geom_col(fill="orange2", width=0.7) +  
+  coord_flip() +
+  scale_y_continuous(limits = c(0, 40))+
+  labs(y="-log10(adjusted p-value)",
+       title="Clone TBX4B cluster 1") + 
+  theme_bw()+ 
+  theme(text=element_text(family="Arial",size=12),
+        panel.grid.minor = element_blank(),
+        plot.title=element_text(size=12),
+        axis.title.y = element_blank())+ 
+  geom_text(aes(label=(genes_in_term)),
+            size = 4,
+            hjust = -0.1,
+            position = "stack")
+
+
+
+
+
+
+
+
+tbx_plot1.2
+```
+
+### MsigDB enrichment plot 2: TBX4B.
+
+```{r echo=F, fig.height=2, fig.width=5}
+tbx_plot2.2<- cluster2_tbx_gprofiler$result %>%
+  subset(source == "h.all.v7.2.symbols")%>%
+  mutate(genes_in_term = paste0(intersection_size, " / ", term_size))%>%
+  mutate(terms=substr(term_id, 10, 100000))%>%
+  ggplot(aes(reorder(terms, -p_value), 
+                     -log10(p_value))) +
+  geom_col(fill="royalblue", width=0.7) +  
+  coord_flip() +
+  scale_y_continuous(limits = c(0, 10))+
+  labs(title="Clone TBX4B cluster 2",
+       y="-log10(adjusted p-value)") +
+  theme_bw()+ 
+  theme(text=element_text(family="Arial",size=12),
+        panel.grid.minor = element_blank(),
+        plot.title=element_text(size=12),
+        axis.title.y = element_blank())+ 
+  geom_text(aes(label=(genes_in_term)),
+            size = 4,
+            hjust = -0.1,
+            position = "stack")
+
+
+
+
+tbx_plot2.2
+```
+
+## Plotting both clones - overlap
+
+```{r echo=F, fig.height=6, fig.width=13}
+
+k<-5
+
+label_both <- Both_cluster_genes
+
+text_label_gene<-c()
+
+
+for(i in 1:k){
+  names <- (head(label_both[(label_both$cluster == i),], n=10))
+  text_label_gene <- c(text_label_gene, names$gene)
+}
+
+
+trajectory_labels_both <- data.frame("gene"=text_label_gene) %>% 
+  inner_join(trans_cts_cluster2_both, by = "gene")%>%
+  dplyr::select(gene, cluster)%>%
+  unique()
+
+trajectory_labels_both$mean_cts_scaled<-(-seq(-1.5, 1.5, 0.32))
+trajectory_labels_both$x<-5
+
+
+
+
+col_colors<-c("Up"="orange2", "Down"="royalblue")
+
+
+trajectories2_both_kmeans_tbj <- trans_cts_cluster2_both[trans_cts_cluster2_both$clones=="3.60",] %>% 
+  ggplot(aes(condition, mean_cts_scaled, label=gene, color=cluster_col)) +
+  geom_line(aes(group = gene), alpha = 0.3, color="black") +
+  geom_line(stat = "summary", 
+            fun = "median",
+            size = 1.5, 
+            aes(group = 1)) + 
+  scale_color_manual(name="Trend", values=col_colors)+
+  facet_wrap( facets = vars(clones, cluster), ncol=1)+
+  ggtitle("") + 
+  theme_bw()+
+  xlab("Timer Protein phase") +
+  ylab("Expression Z-score")+
+    theme(legend.position = "none")+
+    theme(axis.title.x=element_blank(),
+          strip.text.x = element_text(size = 12),
+          plot.title=element_text(size=12),
+          text=element_text(family="Arial", size=12))
+
+trajectories2_both_kmeans_tbx <- trans_cts_cluster2_both[trans_cts_cluster2_both$clones=="TBX4B",] %>% 
+  ggplot(aes(condition, mean_cts_scaled, label=gene, color=cluster_col)) +
+  geom_line(aes(group = gene), alpha = 0.3, color="black") +
+  geom_line(stat = "summary", 
+            fun = "median",
+            size = 1.5, 
+            aes(group = 1)) + 
+  geom_text(data=trajectory_labels_both,aes(x=x, y=mean_cts_scaled, label=gene), inherit.aes = FALSE, size = 3.5)+
+  scale_color_manual(name="Trend", values=col_colors)+
+  scale_x_discrete(expand = c(c(0.2, 0), c(0,2)))+
+  facet_wrap( facets = vars(clones, cluster), ncol=1) +
+  ggtitle("") + 
+  theme_bw() +
+  xlab("") +
+  ylab("")+
+    theme(axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.title.x=element_blank(),
+        strip.text.x = element_text(size = 12),
+        text=element_text(family="Arial", size=12),
+        legend.position = "none")
+
+
+
+trajectories2_both_kmeans <- trans_cts_cluster2_both %>% 
+  ggplot(aes(condition, mean_cts_scaled, label=gene, color=cluster_col)) +
+  geom_line(aes(group = gene), alpha = 0.3, color="black") +
+  geom_line(stat = "summary", 
+            fun = "median",
+            size = 1.5, 
+            aes(group = 1)) + 
+  scale_color_manual(name="Trend", values=col_colors)+
+  facet_wrap( facets = vars(clones, cluster), nrow=2)+
+  ggtitle("") + 
+  theme_bw()+
+  xlab("Timer Protein phase") +
+  ylab("Expression Z-score")+
+    theme(legend.position = "none")+
+    theme(axis.title.x=element_blank(),
+          strip.text.x = element_text(size = 12),
+          plot.title=element_text(size=12),
+          text=element_text(family="Arial", size=16))
+
+
+```
+
+### MsigDB  plot 1 of clone overlap
+
+```{r echo=F, fig.height=1.5, fig.width=5}
+
+
+
+both_plot1.2<- cluster1_both_gprofiler$result %>%
+  subset(source == "h.all.v7.2.symbols")%>%
+  mutate(genes_in_term = paste0(intersection_size, " / ", term_size))%>%
+  mutate(terms=substr(term_id, 10, 100000))%>%
+  ggplot(aes(reorder(terms, -p_value), 
+                     -log10(p_value))) +
+  geom_col(fill="orange2", width=0.7) +  
+  coord_flip() +
+  scale_y_continuous(limits = c(0, 40))+
+  labs(x="",  y="-log10(adjusted p-value)",
+       title="Gene cluster 1") + 
+  theme_bw()+ 
+  theme(text=element_text(family="Arial",size=12),
+        panel.grid.minor = element_blank(),
+        plot.title=element_text(size=12))+ 
+  geom_text(aes(label=(genes_in_term)),
+            size = 4,
+            hjust = -0.1,
+            position = "stack")
+
+
+
+
+both_plot1.2
+```
+
+
+### MsigDB  plot 2 of clone overlap
+
+```{r echo=F, fig.height=1.6, fig.width=6}
+both_plot2.2<- cluster2_both_gprofiler$result %>%
+  subset(source == "h.all.v7.2.symbols")%>%
+  mutate(genes_in_term = paste0(intersection_size, " / ", term_size))%>%
+  mutate(terms=substr(term_id, 10, 100000))%>%
+  ggplot(aes(reorder(terms, -p_value), 
+                     -log10(p_value))) +
+  geom_col(fill="orange2", width=0.7) +  
+  coord_flip() +
+  scale_y_continuous(limits = c(0, 10))+
+  labs(x="", y="-log10(adjusted p-value)",
+       title="Gene cluster 2") + 
+  theme_bw()+ 
+  theme(text=element_text(family="Arial",size=12),
+        panel.grid.minor = element_blank(),
+        plot.title=element_text(size=12))+ 
+  geom_text(aes(label=(genes_in_term)),
+            size = 4,
+            hjust = -0.1,
+            position = "stack")
+
+
+
+
+both_plot2.2
+```
+
+
+### MsigDB  plot 3 of clone overlap
+
+```{r echo=F, fig.height=1.25, fig.width=6}
+both_plot3.2<- cluster3_both_gprofiler$result %>%
+  subset(source == "h.all.v7.2.symbols")%>%
+  mutate(genes_in_term = paste0(intersection_size, " / ", term_size))%>%
+  mutate(terms=substr(term_id, 10, 100000))%>%
+  ggplot(aes(reorder(terms, -p_value), 
+                     -log10(p_value))) +
+  geom_col(fill="royalblue", width=0.7) +  
+  coord_flip() +
+  scale_y_continuous(limits = c(0, 15))+
+  labs(x="", y="-log10(adjusted p-value)",
+       title="Gene cluster 3") + 
+  theme_bw()+ 
+  theme(text=element_text(family="Arial",size=12),
+        panel.grid.minor = element_blank(),
+        plot.title=element_text(size=12))+ 
+  geom_text(aes(label=(genes_in_term)),
+            size = 4,
+            hjust = -0.1,
+            position = "stack")
+
+
+
+
+both_plot3.2
+```
+
+
+
+# Fig 3 - Clustering
+
+```{r echo=F, fig.height=12, fig.width=12}
+
+clone_1_data <- cluster4_both_gprofiler$result[,3:9]
+clone_1_data$clone <- "clone1"
+clone_2_data <- cluster4_both_gprofiler$result[,3:9]
+clone_2_data$clone <- "clone2"
+
+
+both_plot4.2<- rbind(clone_1_data,clone_2_data ) %>%
+  mutate(genes_in_term = paste0(intersection_size, " / ", term_size))%>%
+  mutate(terms=substr(term_id, 10, 100000))%>%
+  ggplot(aes(reorder(terms, -p_value),
+             -log10(p_value), 
+             fill=clone)) +
+  geom_col(width=0.7, position="dodge") +  
+  scale_fill_manual(values=c("clone2"="royalblue", "clone1"="orange2"))+
+  coord_flip() +
+  labs(x="", y="-log10(adjusted p-value)",
+       title="Gene cluster 4") + 
+  theme_bw()+ 
+  theme(text=element_text(family="Arial",size=12),
+        panel.grid.minor = element_blank(),
+        plot.title=element_text(size=12))+ 
+  geom_text(aes(label=c(rep("",4), genes_in_term[1:4])),
+            size = 4,
+            hjust = -0.1,
+            position = "stack")+
+  theme(legend.position = "none")
+
+both_plot4.2
+
+# No significant results for cluster 5
+
+joined_x_lab <- ggplot() + 
+  annotate(geom = "text", x = 1, y = 1, label = "Timer protein phase", size=5, family = "Arial") +
+  coord_cartesian(clip = "off")+
+  theme_void()
+
+
+enrichment_both<-both_plot1.2/both_plot2.2/both_plot3.2/both_plot4.2/plot_spacer()+plot_layout(heights = c(0.7, 0.9, 0.55, 0.8, 1.2))
+
+plots <- cowplot::align_plots(trajectories2_both_kmeans_tbj,trajectories2_both_kmeans_tbx, align="h", axis = 'l')
+overlap_joined_plot_kmeans<-(cowplot::plot_grid(plots[[1]], plots[[2]], rel_widths = c(1, 1.15)) / joined_x_lab )+plot_layout(heights = c(1, 0.01))
+
+(overlap_joined_plot_kmeans|enrichment_both)+plot_layout(widths = c(4, 1)) +
+  plot_annotation(tag_levels = list(c('A', '', 'B')))
+# ggsave("./plots/Overlap_clustering.png")
+
+
+# pdf("./images/Fig3.pdf", height = 12, width = 12,
+#            family = "Arial", fonts="Arial", paper = "special", onefile = FALSE)
+# (overlap_joined_plot_kmeans|enrichment_both)+plot_layout(widths = c(4, 1)) +
+#   plot_annotation(tag_levels = list(c('A', '', 'B')))
+# dev.off()
+
+```
+
+# CYCLEBASE
+
+```{r echo=F}
+"https://www.nature.com/articles/cr201684"
+periodic_genes<-read.csv(file="../cyclebase_G1.csv")
+periodic_genes_G1<- periodic_genes%>%
+  filter(Peaktime=="G1")
+  
+periodic_genes_G1S <-periodic_genes%>%
+  filter(Peaktime=="G1/S")
+periodic_genes<-read.csv(file="../cyclebase_S.csv")
+periodic_genes_S <-periodic_genes%>%
+  filter(Peaktime=="S")
+
+periodic_genes<-read.csv(file="../cyclebase_G2.csv")
+periodic_genes_G2 <-periodic_genes%>%
+  filter(Peaktime=="G2")
+periodic_genes_G2M <-periodic_genes%>%
+  filter(Peaktime=="G2/M")
+
+periodic_genes<-read.csv(file="../cyclebase_M.csv")
+periodic_genes_M <-periodic_genes%>%
+  filter(Peaktime=="M")
+
+G1_S_all<-c(periodic_genes_G1$Primary.name,
+            periodic_genes_G1S$Primary.name,
+            periodic_genes_S$Primary.name)
+
+G2M_all<-c(periodic_genes_G2$Primary.name,
+            periodic_genes_G2M$Primary.name,
+            periodic_genes_M$Primary.name)
+
+cell_cycle_table<-data.frame("gene"=c(G1_S_all, G2M_all))
+cell_cycle_table$phase<-ifelse(cell_cycle_table$gene %in% periodic_genes_G1$Primary.name, "G1", NA)
+cell_cycle_table$phase[is.na(cell_cycle_table$phase)]<-ifelse(cell_cycle_table$gene[is.na(cell_cycle_table$phase)] %in% periodic_genes_G1S$Primary.name, "G1S", NA)
+cell_cycle_table$phase[is.na(cell_cycle_table$phase)]<-ifelse(cell_cycle_table$gene[is.na(cell_cycle_table$phase)] %in% periodic_genes_S$Primary.name, "S", NA)
+cell_cycle_table$phase[is.na(cell_cycle_table$phase)]<-ifelse(cell_cycle_table$gene[is.na(cell_cycle_table$phase)] %in% periodic_genes_G2$Primary.name, "G2", NA)
+cell_cycle_table$phase[is.na(cell_cycle_table$phase)]<-ifelse(cell_cycle_table$gene[is.na(cell_cycle_table$phase)] %in% periodic_genes_G2M$Primary.name, "G2M", NA)
+cell_cycle_table$phase[is.na(cell_cycle_table$phase)]<-ifelse(cell_cycle_table$gene[is.na(cell_cycle_table$phase)] %in% periodic_genes_M$Primary.name, "M", NA)
+
+cell_cycle_table$phase<-factor(cell_cycle_table$phase, levels=c("G1", "G1S", "S", "G2", "G2M", "M"))
+
+
+
+```
+
+# Fig 4 - cell cycle
+
+
+```{r echo=FALSE, fig.height=6, fig.width=9, message=FALSE, warning=FALSE}
+
+
+counts1<-(plotcounts_both_rsem_log_with_significance("ENSG00000105810")+theme(legend.position = "none")+labs(y="<span style='font-size:12pt'>**G1 PHASE**</span>")|
+            (plotcounts_both_rsem_log_with_significance("ENSG00000110092")+theme(axis.title.y=element_blank())+theme(legend.position = "none"))|
+               (plotcounts_both_rsem_log_with_significance("ENSG00000118971")+theme(axis.title.y=element_blank())+theme(legend.position = "none"))|
+               (plotcounts_both_rsem_log_with_significance("ENSG00000112576")+theme(axis.title.y=element_blank())+theme(legend.position = "none")))
+
+
+          
+
+
+
+counts2<-(plotcounts_both_rsem_log_with_significance("ENSG00000123374") + theme(legend.position = "none")+labs(y="<span style='font-size:12pt'>**G1/S PHASE**</span>")|
+            (plotcounts_both_rsem_log_with_significance("ENSG00000105173")+theme(axis.title.y=element_blank())+theme(legend.position = "none"))|
+               (plotcounts_both_rsem_log_with_significance("ENSG00000175305")+theme(axis.title.y=element_blank())+theme(legend.position = "none"))|
+               ( plotcounts_both_rsem_log_with_significance("ENSG00000101412")+theme(axis.title.y=element_blank()))+theme(legend.position = "none"))
+
+
+
+
+counts3 <- (plotcounts_both_rsem_log_with_significance("ENSG00000133101")+theme(legend.position = "none")+labs(y="<span style='font-size:12pt'>**S PHASE**</span>")|
+              (plotcounts_both_rsem_log_with_significance("ENSG00000145386")+theme(axis.title.y=element_blank())+plot_layout(guides = 'keep'))|
+              plot_spacer()|
+             plot_spacer())+
+  plot_layout(widths=c(1.1,1.1,0.2,1.5), guides = "collect")
+
+
+counts4<-(plotcounts_both_rsem_log_with_significance("ENSG00000170312")+theme(legend.position = "none")+labs(y="<span style='font-size:12pt'>**M PHASE**</span>")|
+            (plotcounts_both_rsem_log_with_significance("ENSG00000134057")+theme(axis.title.y=element_blank())+theme(legend.position = "none"))|
+               (plotcounts_both_rsem_log_with_significance("ENSG00000157456")+theme(axis.title.y=element_blank())+theme(legend.position = "none"))|
+               ( plotcounts_both_rsem_log_with_significance("ENSG00000111206")+theme(axis.title.y=element_blank())+theme(legend.position = "none")))
+
+
+
+```
+
+```{r echo=F, fig.height=14, fig.width=11.5}
+# Subset DE genes from transformed matrix
+vst_tbj_regulated <- assay(vst_TBJ_dds)[dds_res_sig_TBJ,]
+tbj_clustering_input <- vst_tbj_regulated
+tbj_clustering_input <-tbj_clustering_input[,c("TBJ360_DN1", "TBJ360_DN2", "TBJ360_Blue1", "TBJ360_Blue2", "TBJ360_DP1", "TBJ360_DP2", "TBJ360_Red1", "TBJ360_Red2")]
+
+vst_tbx_regulated <- assay(vst_TBX_dds)[dds_res_TBX_sig,]
+tbx_clustering_input <- vst_tbx_regulated
+tbx_clustering_input <-tbx_clustering_input[,c("TBX4B_DN1", "TBX4B_DN2", "TBX4B_Blue1", "TBX4B_Blue2", "TBX4B_DP1", "TBX4B_DP2", "TBX4B_Red1", "TBX4B_Red2")]
+
+
+rownames(tbj_clustering_input) <- gene_names_rsem$hgnc_symbol[match(rownames(tbj_clustering_input), gene_names_rsem$ensembl_gene_id)] 
+
+rownames(tbx_clustering_input) <- gene_names_rsem$hgnc_symbol[match(rownames(tbx_clustering_input), gene_names_rsem$ensembl_gene_id)] 
+
+tbj_clustering_input<-tbj_clustering_input[!duplicated(row.names(tbj_clustering_input)),]
+tbx_clustering_input<-tbx_clustering_input[!duplicated(row.names(tbx_clustering_input)),]
+
+tbj_cycle <- cell_cycle_table$gene
+tbj_cycle<-tbj_cycle[!is.na(tbj_cycle)]
+
+tbx_cycle <- cell_cycle_table$gene
+tbx_cycle<-tbx_cycle[!is.na(tbx_cycle)]
+
+tbj_cycle_clustering_input<- tbj_clustering_input[row.names(tbj_clustering_input) %in% tbj_cycle,]
+tbx_cycle_clustering_input<- tbx_clustering_input[row.names(tbx_clustering_input) %in% tbx_cycle,]
+
+sample_info$sample <-rownames(sample_info)
+trans_cts_long_tbj<-as.data.frame(tbj_cycle_clustering_input) %>%
+  tibble::rownames_to_column(var="gene")%>%
+  pivot_longer(cols=c(2:9), 
+               names_to = "sample", 
+               values_to = "cts")%>%
+  full_join(sample_info[9:16,], by=("sample"))
+
+
+
+trans_cts_mean_tbj <- trans_cts_long_tbj %>% 
+  group_by(gene) %>%
+  mutate(cts_scaled=(cts-mean(cts))/sd(cts))%>%
+  group_by(gene, condition) %>% 
+  summarise(mean_cts_scaled = mean(cts_scaled)) %>% 
+  ungroup()
+
+
+trans_cts_mean_tbj <- trans_cts_mean_tbj %>% 
+  inner_join(cell_cycle_table, by = "gene")
+
+
+
+trajectories_tbj_G1_LRT <- trans_cts_mean_tbj %>% 
+  ggplot(aes(condition, mean_cts_scaled, label=gene)) +
+  geom_line(aes(group = gene), alpha = 0.3, color="darkgrey") +
+  geom_line(stat = "summary",
+            fun = "median",
+            size = 1,
+            aes(group = 1), color="black") +
+  guides(color = "none") +
+  scale_x_discrete(expand = c(c(0, 0.2), c(0,0.2)))+
+  theme_bw()+
+  facet_wrap(facets=vars(phase)) + 
+  labs(title="Cell cycle phases in 3.60",
+       y="<span style='font-size:14pt'>(Z-score)</span>",
+       caption=paste0(c("Total genes: "), 
+                      length(unique(trans_cts_mean_tbj$gene))))+
+  theme(plot.title=element_markdown(),
+        axis.title.x=element_blank(),
+        axis.title=element_text(size=12),
+        axis.text = element_text(size = 12),
+        legend.position = "none",
+        axis.title.y=element_markdown(),
+        plot.caption=element_text(size=10),
+        strip.text.x = element_text(size = 12),
+        panel.spacing.x = unit(1.3, "lines"),
+        text=element_text(family="Arial", size=12))
+
+
+trans_cts_long_tbx<-as.data.frame(tbx_cycle_clustering_input) %>%
+  tibble::rownames_to_column(var="gene")%>%
+  pivot_longer(cols=c(2:9), 
+               names_to = "sample", 
+               values_to = "cts")%>%
+  full_join(sample_info[1:8,], by=("sample"))
+
+
+
+trans_cts_mean_tbx <- trans_cts_long_tbx %>% 
+  group_by(gene) %>%
+  mutate(cts_scaled=(cts-mean(cts))/sd(cts))%>%
+  group_by(gene, condition) %>% 
+  summarise(mean_cts_scaled = mean(cts_scaled)) %>% 
+  ungroup()
+
+trans_cts_mean_tbx <- trans_cts_mean_tbx %>% 
+  inner_join(cell_cycle_table, by = "gene") 
+
+
+trajectories_tbx_G1_LRT <- trans_cts_mean_tbx %>% 
+  ggplot(aes(condition, mean_cts_scaled, label=gene)) +
+  geom_line(aes(group = gene), alpha = 0.3, color="darkgrey") +
+  geom_line(stat = "summary",
+            fun = "median",
+            size = 1,
+            aes(group = 1), color="black") +
+  guides(color = "none") +
+  scale_x_discrete(expand = c(c(0, 0.2), c(0,0.2)))+
+  theme_bw()+
+  facet_wrap(facets=vars(phase)) + 
+  labs(title="Cell cycle phases in TBX4B",
+       caption=paste0(c("Total genes: "), 
+                      length(unique(trans_cts_mean_tbx$gene))))+
+  theme(plot.title=element_markdown(),
+        axis.title.x=element_blank(),
+        axis.title=element_text(size=12),
+        legend.position = "none",
+        axis.title.y=element_blank(),
+        plot.caption=element_text(size=10),
+        strip.text.x = element_text(size = 12),
+        axis.text = element_text(size = 12),
+        panel.spacing.x = unit(1.3, "lines"),
+        text=element_text(family="Arial", size=12))
+
+
+(trajectories_tbj_G1_LRT | trajectories_tbx_G1_LRT)/counts1/counts2/counts3/counts4 + plot_layout(heights=c(2, 1, 1, 1, 1), guides="collect") + 
+  plot_annotation(tag_levels = list(c('A', '', 'B')))
+
+# pdf("./images/Fig4.pdf", height = 12, width = 10,
+#            family = "Arial", fonts="Arial", paper = "special", onefile = FALSE)
+# (trajectories_tbj_G1_LRT | trajectories_tbx_G1_LRT)/counts1/counts2/counts3/counts4 + plot_layout(heights=c(2, 1, 1, 1, 1), guides="collect") + 
+#   plot_annotation(tag_levels = list(c('A', '', 'B')))
+# dev.off()
+
+
+
+```
+
+
+# Fig 5 - CDKI and DNA damage
+
+```{r echo=FALSE, fig.height=12, fig.width=12, message=FALSE, warning=FALSE}
+counts2_inhibitors<-plotcounts_both_rsem_log_with_significance("ENSG00000124762")+theme(axis.title.y=element_blank())+theme(legend.position = "none")|
+  (plotcounts_both_rsem_log_with_significance("ENSG00000129757")+theme(axis.title.y=element_blank())+theme(legend.position = "none"))
+
+counts1_inhibitors<-plotcounts_both_rsem_log_with_significance("ENSG00000147889")+theme(legend.position = "none")|
+  (plotcounts_both_rsem_log_with_significance("ENSG00000147883")+theme(legend.position = "none"))|
+  (plotcounts_both_rsem_log_with_significance("ENSG00000129355")+theme(axis.title.y=element_blank())+theme(legend.position = "none"))|plotcounts_both_rsem_log_with_significance("ENSG00000123080")+theme(axis.title.y=element_blank())+theme(legend.position = "none")
+
+counts1_inhibitors/(counts2_inhibitors + plotcounts_both_rsem_log_with_significance("ENSG00000141510")+theme(axis.title.y=element_blank())+theme(legend.position = "none"))/(plotcounts_both_rsem_log_with_significance("ENSG00000119318")+theme(axis.title.y=element_blank())+theme(legend.position = "none")+plotcounts_both_rsem_log_with_significance("ENSG00000154767")+theme(axis.title.y=element_blank())+theme(legend.position = "none")+plotcounts_both_rsem_log_with_significance("ENSG00000099860")+theme(axis.title.y=element_blank())+theme(legend.position = "none"))/(plotcounts_both_rsem_log_with_significance("ENSG00000170266")+theme(axis.title.y=element_blank())+theme(legend.position = "none")+plotcounts_both_rsem_log_with_significance("ENSG00000147400")+theme(axis.title.y=element_blank())+theme(legend.position = "none")+plotcounts_both_rsem_log_with_significance("ENSG00000132646")+theme(axis.title.y=element_blank())+theme(legend.position = "none"))
+
+
+
+row1<-((plotcounts_both_rsem_log_with_significance("ENSG00000147889")+theme(legend.position = "none",)|
+  (plotcounts_both_rsem_log_with_significance("ENSG00000147883")+theme(legend.position = "none",axis.title.y=element_blank()))|
+  plotcounts_both_rsem_log_with_significance("ENSG00000124762")+theme(axis.title.y=element_blank())+theme(legend.position = "none")|
+  (plotcounts_both_rsem_log_with_significance("ENSG00000129757")+theme(axis.title.y=element_blank())+theme(legend.position = "none"))|plot_spacer())+plot_layout(widths =c(1, 1, 1, 1,0.7)))&
+  plot_annotation(title=c("INK4 and CIP/KIP families"),theme=    theme(plot.title=element_textbox_simple(linetype = 1,
+                                              padding = margin(5, 5, 5, 5),
+                                              r = grid::unit(3, "pt"),
+                                              margin = margin(0, 0, 20, 0),
+                                              hjust = 0,
+                                              linewidth = 0.3,
+                                              fill="#FFEEEC",
+                                              size=12,
+                                              family="Arial")))
+
+
+row2<-((plotcounts_both_rsem_log_with_significance("ENSG00000141510")+theme(legend.position = "none",axis.title.y=element_blank())|
+  (plotcounts_both_rsem_log_with_significance("ENSG00000073282")+theme(legend.position = "none",axis.title.y=element_blank()))|
+  plotcounts_both_rsem_log_with_significance("ENSG00000099860")+theme(axis.title.y=element_blank())+theme(legend.position = "none")|
+  (plotcounts_both_rsem_log_with_significance("ENSG00000116717")+theme(axis.title.y=element_blank())+theme(legend.position = "none"))|plot_spacer())+plot_layout(widths =c(1, 1, 1, 1,0.75)))&
+  plot_annotation(title=c("DDR and senescence"),theme=    theme(plot.title=element_textbox_simple(linetype = 1,
+                                              padding = margin(5, 5, 5, 5),
+                                              r = grid::unit(3, "pt"),
+                                              margin = margin(0, 0, 20, 0),
+                                              hjust = 0,
+                                              linewidth = 0.3,
+                                              fill="white",
+                                              size=12,
+                                              family="Arial")))
+
+
+row3<-((plotcounts_both_rsem_log_with_significance("ENSG00000130222")+theme(legend.position = "none",axis.title.y=element_blank())|
+  (plotcounts_both_rsem_log_with_significance("ENSG00000119318")+theme(legend.position = "none",axis.title.y=element_blank()))|
+  plotcounts_both_rsem_log_with_significance("ENSG00000154767")+theme(axis.title.y=element_blank())+theme(legend.position = "none")|
+  (plotcounts_both_rsem_log_with_significance("ENSG00000147400")+theme(axis.title.y=element_blank())+theme(legend.position = "none")))/
+    (plotcounts_both_rsem_log_with_significance("ENSG00000132646")+theme(legend.position = "none",axis.title.y=element_blank())|
+  (plotcounts_both_rsem_log_with_significance("ENSG00000149311")+theme(axis.title.y=element_blank(),legend.position = "none"))|
+    (plotcounts_both_rsem_log_with_significance("ENSG00000175054")+theme(axis.title.y=element_blank(),legend.position = "none"))|
+  (plotcounts_both_rsem_log_with_significance("ENSG00000170266")+theme(axis.title.y=element_blank()))))
+  
+  
+  
+  
+
+
+wrap_elements(row1)/wrap_elements(row2)/wrap_elements(row3) + plot_layout(heights = c(1,1,1.55))
+
+
+
+# png("./plots/Dna_damage_and_senescence_plots.png", family="Arial", width = 9, height = 10, units = "in", res=300)
+
+wrap_elements(row1)/wrap_elements(row2)/wrap_elements(row3) + plot_layout(guides="collect",heights = c(1,1,1.55))
+
+# pdf("./images/Fig5.pdf", height = 11, width = 11,
+#            family = "Arial", fonts="Arial", paper = "special", onefile = FALSE)
+# wrap_elements(row1)/wrap_elements(row2)/wrap_elements(row3) + plot_layout(guides="collect",heights = c(1,1,1.55))
+# dev.off()
+
+```
+
+# Fig 6 - apoptosis
+
+```{r echo=FALSE, fig.height=14, fig.width=9, message=FALSE, warning=FALSE}
+
+
+
+apoptotic_pore<-(plotcounts_both_rsem_log_with_significance("ENSG00000087088")+
+                   theme(legend.position = "none")+
+                   ggtitle("Pore forming BCL2")+
+                   theme(plot.title=element_textbox_simple(linetype = 1,
+                                                    padding = margin(5, 5, 5, 5),
+                                                    r = grid::unit(3, "pt"),
+                                                    margin = margin(0, 0, 20, 0),
+                                                    hjust = 0,
+                                                    linewidth = 0.3,
+                                                    fill="#EAFAF4")))/
+                   (plotcounts_both_rsem_log_with_significance("ENSG00000030110")+
+                      labs(y="<span style='font-size:12pt'>**Intrinsic apoptosis**</span>")+
+                      theme(axis.title.y=element_blank())+
+                      theme(legend.position = "none"))
+apoptotic_pore<-((plotcounts_both_rsem_log_with_significance("ENSG00000087088")+
+                   theme(legend.position = "none"))/
+                   (plotcounts_both_rsem_log_with_significance("ENSG00000030110")+
+                      labs(y="<span style='font-size:12pt'>**Intrinsic apoptosis**</span>")+
+                      theme(axis.title.y=element_blank())+
+                      theme(legend.position = "none")))&
+  plot_annotation(title=c("Pore forming BCL2"),
+                  theme=theme(plot.title=element_textbox_simple(linetype = 1,
+                                                                padding = margin(5, 5, 5, 5),
+                                                                r = grid::unit(3, "pt"),
+                                                                margin = margin(0, 0, 20, 0),
+                                                                hjust = 0,
+                                                                linewidth = 0.3,
+                                                                fill="#EAFAF4")))
+
+
+apoptotic_bcl2 <- (((plotcounts_both_rsem_log_with_significance("ENSG00000153094")+
+      theme(legend.position = "none")+
+        theme(axis.title.y=element_blank()))|
+     (plotcounts_both_rsem_log_with_significance("ENSG00000141682")+
+        theme(axis.title.y=element_blank())+
+        theme(legend.position = "none"))) /
+  ((plotcounts_both_rsem_log_with_significance("ENSG00000104081")+
+      theme(axis.title.y=element_blank())+
+      theme(legend.position = "none"))|
+     plotcounts_both_rsem_log_with_significance("ENSG00000015475")+
+     theme(axis.title.y=element_blank())+
+     theme(legend.position = "none")))&
+  plot_annotation(title=c("Pro-apoptotic BCL2"),theme=    theme(plot.title=element_textbox_simple(linetype = 1,
+                                              padding = margin(5, 5, 5, 5),
+                                              r = grid::unit(3, "pt"),
+                                              margin = margin(0, 0, 20, 0),
+                                              hjust = 0,
+                                              linewidth = 0.3,
+                                              fill="#EAFAF4")))
+
+
+
+
+
+
+anti_apoptotic_bcl2<-((plotcounts_both_rsem_log_with_significance("ENSG00000171791")+
+              theme(axis.title.y = element_blank())+
+              theme(legend.position = "none"))|
+  (plotcounts_both_rsem_log_with_significance("ENSG00000171552")+
+     theme(axis.title.y = element_blank())+
+     theme(legend.position = "none"))|
+  (plotcounts_both_rsem_log_with_significance("ENSG00000129473")+
+     theme(axis.title.y = element_blank())+
+     theme(legend.position = "none")))&
+  plot_annotation(title = c("Anti-apoptotic BCL2"),
+                  theme = theme(plot.title=element_textbox_simple(linetype = 1,
+                                                                  padding = margin(5, 5, 5, 5),
+                                                                  r = grid::unit(3, "pt"),
+                                                                  margin = margin(0, 0, 20, 0),
+                                                                  hjust = 0,
+                                                                  linewidth = 0.3,
+                                                                  fill="#FFF8CF")))
+
+
+    
+
+extrinsic_apoptosis <- (((plotcounts_both_rsem_log_with_significance("ENSG00000026103")+
+      theme(legend.position = "none")+
+        theme(axis.title.y=element_blank()))|
+     (plotcounts_both_rsem_log_with_significance("ENSG00000120889")+
+        theme(axis.title.y=element_blank())+
+        theme(legend.position = "none")) |
+  (plotcounts_both_rsem_log_with_significance("ENSG00000028137")+
+      theme(axis.title.y=element_blank())+
+      theme(legend.position = "none")))/
+     ((plotcounts_both_rsem_log_with_significance("ENSG00000117560")+
+     theme(axis.title.y=element_blank())+
+     theme(legend.position = "none"))|
+  (plotcounts_both_rsem_log_with_significance("ENSG00000121858")+
+      theme(axis.title.y=element_blank())+
+      theme(legend.position = "none"))|
+     plotcounts_both_rsem_log_with_significance("ENSG00000232810")+
+     theme(axis.title.y=element_blank())+
+     theme(legend.position = "none")))&
+  plot_annotation(title=c("Receptor-ligand pairs"),theme=    theme(plot.title=element_textbox_simple(linetype = 1,
+                                              padding = margin(5, 5, 5, 5),
+                                              r = grid::unit(3, "pt"),
+                                              margin = margin(0, 0, 20, 0),
+                                              hjust = 0,
+                                              linewidth = 0.3,
+                                              fill="#E0E9FF")))
+
+intrinsic_apo_joined <-((wrap_elements(apoptotic_pore)|wrap_elements(apoptotic_bcl2)) + plot_layout(widths = c(1.1,2)))/(wrap_elements(anti_apoptotic_bcl2))
+                                                                                                      
+
+intrinsic_apo_joined/wrap_elements(extrinsic_apoptosis)+plot_layout(heights = c(1.8,1,1.8)) + plot_annotation(tag_levels = 'A')
+
+
+
+caspases<-((plotcounts_both_rsem_log_with_significance("ENSG00000064012")+
+              theme(axis.title.y = element_blank())+
+              theme(legend.position = "none"))|
+  (plotcounts_both_rsem_log_with_significance("ENSG00000003400")+
+     theme(axis.title.y = element_blank())+
+     theme(legend.position = "none"))|
+  (plotcounts_both_rsem_log_with_significance("ENSG00000164305")+
+     theme(axis.title.y = element_blank(),
+           legend.position = "none")))&
+  plot_annotation(title = c("Caspases"),
+                  theme = theme(plot.title=element_textbox_simple(linetype = 1,
+                                                                  padding = margin(5, 5, 5, 5),
+                                                                  r = grid::unit(3, "pt"),
+                                                                  margin = margin(0, 0, 20, 0),
+                                                                  hjust = 0,
+                                                                  linewidth = 0.3,
+                                                                  fill="white")))
+
+apoptosis_inhibitors<-((plotcounts_both_rsem_log_with_significance("ENSG00000110330")+
+              theme(axis.title.y = element_blank())+
+              theme(legend.position = "none"))/
+  (plotcounts_both_rsem_log_with_significance("ENSG00000023445")+
+     theme(axis.title.y = element_blank())+
+     theme(legend.position = "none"))/
+  (plotcounts_both_rsem_log_with_significance("ENSG00000003402")+
+     theme(axis.title.y = element_blank())+
+     theme(legend.position = "none"))/
+     (plotcounts_both_rsem_log_with_significance("ENSG00000118503")+
+     theme(axis.title.y = element_blank()))/
+       guide_area()+plot_layout(guides = "collect" ))&
+  plot_annotation(title = c("Apoptosis inhibitors"),
+                  theme = theme(plot.title=element_textbox_simple(linetype = 1,
+                                                                  padding = margin(5, 5, 5, 5),
+                                                                  r = grid::unit(3, "pt"),
+                                                                  margin = margin(0, 0, 20, 0),
+                                                                  hjust = 0,
+                                                                  linewidth = 0.3,
+                                                                  fill="#FFEAE0")))
+
+inhib <- wrap_elements(apoptosis_inhibitors)
+casp<-wrap_elements(caspases)
+
+
+# pdf("./images/Fig6.pdf", height = 14, width = 9,
+#            family = "Arial", fonts="Arial", paper = "special", onefile = FALSE)
+
+((intrinsic_apo_joined/wrap_elements(extrinsic_apoptosis)/casp+plot_layout(heights = c(1.65,1,1.65,1)))|(inhib/plot_spacer()+plot_layout(heights=c(1.8,1))))+plot_layout(widths = c(2.3,0.8))
+
+
+dev.off()
+```
+
+
+
+# Fig 7 - PRC1
+
+```{r echo=F, fig.height=3.2, fig.width=12}
+
+prc_part1 <- ((plotcounts_both_rsem_log("ENSG00000204227")+theme(legend.position = "none"))|
+  (plotcounts_both_rsem_log("ENSG00000163602")+theme(axis.title.y=element_blank())+theme(legend.position = "none"))|
+  (plotcounts_both_rsem_log("ENSG00000089094")+theme(axis.title.y=element_blank())+theme(legend.position = "none")))&
+  plot_annotation(title=c("Non-canonical PRC1"),theme=    theme(plot.title=element_textbox_simple(linetype = 1,
+                                              padding = margin(5, 5, 5, 5),
+                                              r = grid::unit(3, "pt"),
+                                              margin = margin(0, 0, 20, 0),
+                                              hjust = 0,
+                                              linewidth = 0.3,
+                                              fill="white",
+                                              size=12,
+                                              family="Arial")))
+
+prc_part2<- (plotcounts_both_rsem_log("ENSG00000168283")+theme(axis.title.y=element_blank()))+plot_layout(guides = "collect")&
+  plot_annotation(title=c("Canonical PRC1"),theme=    theme(plot.title=element_textbox_simple(linetype = 1,
+                                              padding = margin(5, 5, 5, 5),
+                                              r = grid::unit(3, "pt"),
+                                              margin = margin(0, 0, 20, 0),
+                                              hjust = 0,
+                                              linewidth = 0.3,
+                                              fill="lightgrey",
+                                              size=12,
+                                              family="Arial")))
+
+
+(wrap_elements(prc_part1)|wrap_elements(prc_part2))+plot_layout(widths = c(1.85,1))
+pdf("./images/Fig7.pdf", height = 3, width = 11,
+           family = "Arial", fonts="Arial", paper = "special", onefile = FALSE)
+(wrap_elements(prc_part1)|wrap_elements(prc_part2))+plot_layout(widths = c(2.1,1))
+dev.off()
+```
+
+
+# Supplementary figures
+
+### 3.60 volcano plot DN - Blue
+
+```{r eval=FALSE, fig.height=9, fig.width=9, message=FALSE, warning=FALSE, include=FALSE}
+
+library(EnhancedVolcano)
+# Blue_vs_DN_tbj_padj <- joined_Blue_vs_DN_table_tbj%>%
+#   filter(padj<0.01)%>%
+#   arrange(padj)
+# Blue_vs_DN_tbj_padj<-Blue_vs_DN_tbj_padj[1:50,]
+Blue_vs_DN_tbj_upregulated <- joined_Blue_vs_DN_table_tbj%>%
+  filter(padj<0.01)%>%
+  filter(log2FoldChange>0)%>%
+  arrange(desc(log2FoldChange))%>%
+  arrange(padj)
+
+Blue_vs_DN_tbj_upregulated<-Blue_vs_DN_tbj_upregulated[1:10,]
+
+
+
+Blue_vs_DN_tbj_downregulated <- joined_Blue_vs_DN_table_tbj%>%
+  filter(padj<0.01)%>%
+  filter(log2FoldChange<0)%>%
+  arrange(log2FoldChange)%>%
+  arrange(padj)
+Blue_vs_DN_tbj_downregulated<-Blue_vs_DN_tbj_downregulated[1:10,]
+
+labs<-c(row.names(Blue_vs_DN_tbj_upregulated), row.names(Blue_vs_DN_tbj_downregulated))
+labs<-gene_names_rsem$hgnc_symbol[match(labs, gene_names_rsem$ensembl_gene_id)]
+keyvals <- ifelse(
+    joined_Blue_vs_DN_table_tbj$padj > 0.01, "grey",
+    ifelse(joined_Blue_vs_DN_table_tbj$log2FoldChange < 0, 'royalblue',
+      ifelse(joined_Blue_vs_DN_table_tbj$log2FoldChange > 0, 'orange2',
+        'grey')))
+keyvals[is.na(keyvals)] <- 'grey'
+names(keyvals)[keyvals == 'orange2'] <- 'Up-regulated'
+names(keyvals)[keyvals == 'royalblue'] <- 'Down-regulated'
+names(keyvals)[keyvals == 'grey'] <- 'ns'
+
+volcano_1<-EnhancedVolcano(joined_Blue_vs_DN_table_tbj,
+                lab = (joined_Blue_vs_DN_table_tbj$SYMBOL),
+                x = 'log2FoldChange',
+                y = 'padj',
+                ylab = bquote(~-Log[10]~italic(P-adjusted)),
+                xlim = c(-10, 15),
+                ylim = c(0, 350),
+                title = 'Differentially expressed genes: DN to Blue in 3.60',
+                pCutoff = 0.01,
+                FCcutoff = 0,
+                pointSize = 1,
+                caption="",
+                selectLab = labs,
+                labSize = 5,
+                drawConnectors = TRUE,
+                arrowheads = F,
+                maxoverlapsConnectors = 35,
+                colCustom = keyvals,
+                widthConnectors = 0.15) + labs(y= "-log10 adjusted p-value", subtitle=NULL) +
+  theme(plot.title = element_text(size=12), 
+        axis.title=element_text(size=12),
+        text=element_text(family="Arial", size=12))
+
+volcano_1
+
+```
+
+
+```{r echo=F, fig.height=5, fig.width=9}
+
+load(file = "./Pairwise.RData")
+
+joined_Blue_vs_DN_table_tbj_test<-joined_Blue_vs_DN_table_tbj%>%
+  na.omit
+
+color_list <- ifelse(
+    joined_Blue_vs_DN_table_tbj_test$padj > 0.01, "ns",
+    ifelse(joined_Blue_vs_DN_table_tbj_test$log2FoldChange < 0, 'Down-regulated',
+      ifelse(joined_Blue_vs_DN_table_tbj_test$log2FoldChange > 0, 'Up-regulated',
+        'grey')))
+joined_Blue_vs_DN_table_tbj_test$cols<-color_list
+joined_Blue_vs_DN_table_tbj_test[joined_Blue_vs_DN_table_tbj_test$padj==0,]$padj<-10^-323
+
+Blue_vs_DN_tbj_upregulated <- joined_Blue_vs_DN_table_tbj_test%>%
+  filter(padj<0.01)%>%
+  filter(log2FoldChange>0)%>%
+  arrange(desc(log2FoldChange))%>%
+  arrange(padj)
+
+Blue_vs_DN_tbj_upregulated<-Blue_vs_DN_tbj_upregulated[1:10,]
+
+
+
+Blue_vs_DN_tbj_downregulated <- joined_Blue_vs_DN_table_tbj_test%>%
+  filter(padj<0.01)%>%
+  filter(log2FoldChange<0)%>%
+  arrange(log2FoldChange)%>%
+  arrange(padj)
+Blue_vs_DN_tbj_downregulated<-Blue_vs_DN_tbj_downregulated[1:10,]
+
+volcano_1<-ggplot(joined_Blue_vs_DN_table_tbj_test, aes(x=log2FoldChange, y=-log10(padj)))+
+  geom_point(aes(colour = cols),alpha=0.4, size=1)+
+  scale_colour_manual(name = 'cols', values = c("ns"="grey", "Down-regulated"="#73A1F3", "Up-regulated"="orange2"))+
+  geom_text_repel(data=Blue_vs_DN_tbj_downregulated,
+            aes(log2FoldChange, 
+                -log10(padj), 
+                label=Blue_vs_DN_tbj_downregulated$SYMBOL),
+            nudge_y=-5.5, 
+            cex=4,
+            segment.size=0.2,
+            nudge_x=-2.7,
+            max.overlaps = 30,
+            segment.alpha=0.4)+
+    geom_text_repel(data=Blue_vs_DN_tbj_upregulated,
+            aes(log2FoldChange, 
+                -log10(padj), 
+                label=Blue_vs_DN_tbj_upregulated$SYMBOL),
+            # direction = "x",
+            # angle=45,
+            nudge_y=20,
+            nudge_x=5,
+            # hjust=0.5,
+            force=1,
+            force_pull=1,
+            cex=4,
+            segment.size=0.2,
+            segment.alpha=0.4,
+            max.overlaps = 30)+
+  ylim(0, 500)+
+  xlim(-12, 17)+
+  labs(title="<span style='font-size:12pt'>DN to Blue in 3.60</span>",
+       x="<span style='font-size:12pt'><br>Log<sub>2</sub> fold change</span>",
+       y="<span style='font-size:12pt'><br>-log<sub>10</sub> adjusted p-value</span>")+
+  geom_vline(xintercept=0, color="darkgrey", linetype=2)+
+  theme_bw()+ 
+  theme(legend.title=element_blank(),
+        axis.title.y=element_markdown(family="Arial"),
+        axis.title.x=element_markdown(family="Arial"),
+        plot.title=element_markdown(family = "Arial"),
+        axis.text = element_text(size = 12),
+        text=element_text(family="Arial", size=12)
+        )
+volcano_1
+
+
+
+```
+
+### TBX4B volcano plot DN - Blue
+
+```{r eval=FALSE, fig.height=9, fig.width=9, message=FALSE, warning=FALSE, include=FALSE}
+
+# Blue_vs_DN_tbx_padj <- joined_Blue_vs_DN_table_tbx%>%
+#   filter(padj<0.01)%>%
+#   arrange(padj)
+# Blue_vs_DN_tbx_padj<-Blue_vs_DN_tbx_padj[1:50,]
+Blue_vs_DN_tbx_upregulated <- joined_Blue_vs_DN_table_tbx%>%
+  filter(padj<0.01)%>%
+  filter(log2FoldChange>0)%>%
+  arrange(desc(log2FoldChange))%>%
+  arrange(padj)
+
+Blue_vs_DN_tbx_upregulated<-Blue_vs_DN_tbx_upregulated[1:40,]
+
+
+
+Blue_vs_DN_tbx_downregulated <- joined_Blue_vs_DN_table_tbx%>%
+  filter(padj<0.01)%>%
+  filter(log2FoldChange<0)%>%
+  arrange(log2FoldChange)%>%
+  arrange(padj)
+Blue_vs_DN_tbx_downregulated<-Blue_vs_DN_tbx_downregulated[1:40,]
+
+labs<-c(row.names(Blue_vs_DN_tbx_upregulated), row.names(Blue_vs_DN_tbx_downregulated))
+labs<-gene_names_rsem$hgnc_symbol[match(labs, gene_names_rsem$ensembl_gene_id)]
+keyvals <- ifelse(
+    joined_Blue_vs_DN_table_tbx$padj > 0.01, "grey",
+    ifelse(joined_Blue_vs_DN_table_tbx$log2FoldChange < 0, 'royalblue',
+      ifelse(joined_Blue_vs_DN_table_tbx$log2FoldChange > 0, 'orange2',
+        'grey')))
+keyvals[is.na(keyvals)] <- 'grey'
+names(keyvals)[keyvals == 'orange2'] <- 'Up-regulated'
+names(keyvals)[keyvals == 'royalblue'] <- 'Down-regulated'
+names(keyvals)[keyvals == 'grey'] <- 'ns'
+
+volcano_2 <- EnhancedVolcano(joined_Blue_vs_DN_table_tbx,
+                             lab = (joined_Blue_vs_DN_table_tbx$SYMBOL),
+                             x = 'log2FoldChange',
+                             y = 'padj',
+                             ylab = bquote(~-Log[10]~italic(P-adjusted)),
+                             xlim = c(-10, 15),
+                             title = 'Differentially expressed genes: DN to Blue in TBX4B',
+                             pCutoff = 0.01,
+                             FCcutoff = 0,
+                             pointSize = 1,
+                             caption="",
+                             selectLab = labs,
+                             labSize = 5,
+                             drawConnectors = TRUE,
+                             arrowheads = F,
+                             maxoverlapsConnectors = 35,
+                             colCustom = keyvals,
+                             widthConnectors = 0.15) + labs(y= "-log10 adjusted p-value", subtitle=NULL) +
+  theme(plot.title = element_text(size=12), 
+        axis.title=element_text(size=12), 
+        axis.title.y = element_blank(),
+        text=element_text(family="Arial", size=12))
+
+
+
+```
+
+```{r echo=F, fig.height=5, fig.width=9}
+
+
+
+joined_Blue_vs_DN_table_tbx_test<-joined_Blue_vs_DN_table_tbx%>%
+  na.omit
+
+color_list <- ifelse(
+    joined_Blue_vs_DN_table_tbx_test$padj > 0.01, "ns",
+    ifelse(joined_Blue_vs_DN_table_tbx_test$log2FoldChange < 0, 'Down-regulated',
+      ifelse(joined_Blue_vs_DN_table_tbx_test$log2FoldChange > 0, 'Up-regulated',
+        'grey')))
+joined_Blue_vs_DN_table_tbx_test$cols<-color_list
+joined_Blue_vs_DN_table_tbx_test[joined_Blue_vs_DN_table_tbx_test$padj==0,]$padj<-10^-323
+
+Blue_vs_DN_tbx_upregulated <- joined_Blue_vs_DN_table_tbx_test%>%
+  filter(padj<0.01)%>%
+  filter(log2FoldChange>0)%>%
+  arrange(desc(log2FoldChange))%>%
+  arrange(padj)
+
+Blue_vs_DN_tbx_upregulated2<-Blue_vs_DN_tbx_upregulated[1:10,]
+Blue_vs_DN_tbx_upregulated2<-data.frame(rbind(as.matrix(Blue_vs_DN_tbx_upregulated2), as.matrix(Blue_vs_DN_tbx_upregulated["Timer_protein",])))
+Blue_vs_DN_tbx_upregulated2$log2FoldChange<- as.double(Blue_vs_DN_tbx_upregulated2$log2FoldChange)
+Blue_vs_DN_tbx_upregulated2$padj<- as.double(Blue_vs_DN_tbx_upregulated2$padj)
+
+
+Blue_vs_DN_tbx_downregulated <- joined_Blue_vs_DN_table_tbx_test%>%
+  filter(padj<0.01)%>%
+  filter(log2FoldChange<0)%>%
+  arrange(log2FoldChange)%>%
+  arrange(padj)
+Blue_vs_DN_tbx_downregulated<-Blue_vs_DN_tbx_downregulated[1:10,]
+
+volcano_2<-ggplot(joined_Blue_vs_DN_table_tbx_test, aes(x=log2FoldChange, y=-log10(padj)))+
+  geom_point(aes(colour = cols),alpha=0.4, size=1)+
+  scale_colour_manual(name = 'cols', values = c("ns"="grey", "Down-regulated"="#73A1F3", "Up-regulated"="orange2"))+
+  geom_text_repel(data=Blue_vs_DN_tbx_downregulated,
+            aes(log2FoldChange, 
+                -log10(padj), 
+                label=SYMBOL),
+            nudge_y=20,
+            nudge_x=-2, 
+            segment.size=0.2,
+            cex=4,
+            max.overlaps = 30,
+            segment.alpha=0.4)+
+    geom_text_repel(data=Blue_vs_DN_tbx_upregulated2,
+            aes(log2FoldChange, 
+                -log10(padj), 
+                label=SYMBOL),
+            cex=4,
+            nudge_x=1,
+            segment.size=0.2,
+            segment.alpha=0.4,
+            max.overlaps = 30)+
+  ylim(0, 350)+
+  xlim(-10, 16)+
+  labs(title="<span style='font-size:12pt'>DN to Blue in TBX4B</span>",
+       x="<span style='font-size:12pt'><br>Log<sub>2</sub> fold change</span>")+
+  geom_vline(xintercept=0, color="darkgrey", linetype=2)+
+  theme_bw()+ 
+  theme(legend.title=element_blank(),
+        axis.title.y=element_blank(),
+        axis.title.x=element_markdown(family="Arial"),
+        plot.title=element_markdown(family = "Arial"),
+        axis.text = element_text(size = 12),
+        text=element_text(family="Arial", size=12)
+        )
+volcano_2
+
+
+
+```
+
+### 3.60 volcano plot Blue to Red
+
+```{r eval=FALSE, fig.height=9, fig.width=9, message=FALSE, warning=FALSE, include=FALSE}
+
+library(EnhancedVolcano)
+# Red_vs_Blue_tbj_padj <- joined_Red_vs_Blue_table_tbj%>%
+#   filter(padj<0.01)%>%
+#   arrange(padj)
+# Red_vs_Blue_tbj_padj<-Red_vs_Blue_tbj_padj[1:50,]
+Red_vs_Blue_tbj_upregulated <- joined_Red_vs_Blue_table_tbj%>%
+  filter(padj<0.01)%>%
+  filter(log2FoldChange>0)%>%
+  arrange(desc(log2FoldChange))%>%
+  arrange(padj)
+
+Red_vs_Blue_tbj_upregulated<-Red_vs_Blue_tbj_upregulated[1:10,]
+
+
+
+Red_vs_Blue_tbj_downregulated <- joined_Red_vs_Blue_table_tbj%>%
+  filter(padj<0.01)%>%
+  filter(log2FoldChange<0)%>%
+  arrange(log2FoldChange)%>%
+  arrange(padj)
+Red_vs_Blue_tbj_downregulated<-Red_vs_Blue_tbj_downregulated[1:10,]
+
+labs<-c(row.names(Red_vs_Blue_tbj_upregulated), row.names(Red_vs_Blue_tbj_downregulated))
+labs<-gene_names_rsem$hgnc_symbol[match(labs, gene_names_rsem$ensembl_gene_id)]
+keyvals <- ifelse(
+    joined_Red_vs_Blue_table_tbj$padj > 0.01, "grey",
+    ifelse(joined_Red_vs_Blue_table_tbj$log2FoldChange < 0, 'royalblue',
+      ifelse(joined_Red_vs_Blue_table_tbj$log2FoldChange > 0, 'orange2',
+        'grey')))
+keyvals[is.na(keyvals)] <- 'grey'
+names(keyvals)[keyvals == 'orange2'] <- 'Up-regulated'
+names(keyvals)[keyvals == 'royalblue'] <- 'Down-regulated'
+names(keyvals)[keyvals == 'grey'] <- 'ns'
+
+volcano_3<-EnhancedVolcano(joined_Red_vs_Blue_table_tbj,
+                lab = (joined_Red_vs_Blue_table_tbj$SYMBOL),
+                x = 'log2FoldChange',
+                y = 'padj',
+                ylab = bquote(~-Log[10]~italic(P-adjusted)),
+                xlim = c(-10, 10),
+                ylim = c(0, 300),
+                title = 'Differentially expressed genes: Blue to Red in 3.60',
+                pCutoff = 0.01,
+                FCcutoff = 0,
+                pointSize = 1,
+                caption="",
+                selectLab = labs,
+                labSize = 5,
+                drawConnectors = TRUE,
+                arrowheads = F,
+                maxoverlapsConnectors = 35,
+                colCustom = keyvals,
+                widthConnectors = 0.15) + labs(y= "-log10 adjusted p-value", subtitle=NULL) +
+  theme(plot.title = element_text(size=12), 
+        axis.title=element_text(size=12), 
+        axis.title.y = element_blank(),
+        text=element_text(family="Arial", size=12))
+
+volcano_3
+
+```
+
+```{r echo=F, fig.height=5, fig.width=9}
+
+
+
+joined_Red_vs_Blue_table_tbj_test<-joined_Red_vs_Blue_table_tbj%>%
+  na.omit
+
+color_list <- ifelse(
+    joined_Red_vs_Blue_table_tbj_test$padj > 0.01, "ns",
+    ifelse(joined_Red_vs_Blue_table_tbj_test$log2FoldChange < 0, 'Down-regulated',
+      ifelse(joined_Red_vs_Blue_table_tbj_test$log2FoldChange > 0, 'Up-regulated',
+        'grey')))
+joined_Red_vs_Blue_table_tbj_test$cols<-color_list
+joined_Red_vs_Blue_table_tbj_test[joined_Red_vs_Blue_table_tbj_test$padj==0,]$padj<-10^-323
+
+Red_vs_Blue_tbj_upregulated <- joined_Red_vs_Blue_table_tbj_test%>%
+  filter(padj<0.01)%>%
+  filter(log2FoldChange>0)%>%
+  arrange(desc(log2FoldChange))%>%
+  arrange(padj)
+
+Red_vs_Blue_tbj_upregulated2<-Red_vs_Blue_tbj_upregulated[1:10,]
+Red_vs_Blue_tbj_upregulated2$log2FoldChange<- as.double(Red_vs_Blue_tbj_upregulated2$log2FoldChange)
+Red_vs_Blue_tbj_upregulated2$padj<- as.double(Red_vs_Blue_tbj_upregulated2$padj)
+
+
+
+
+
+Red_vs_Blue_tbj_downregulated <- joined_Red_vs_Blue_table_tbj_test%>%
+  filter(padj<0.01)%>%
+  filter(log2FoldChange<0)%>%
+  arrange(log2FoldChange)%>%
+  arrange(padj)
+Red_vs_Blue_tbj_downregulated2<-Red_vs_Blue_tbj_downregulated[1:10,]
+Red_vs_Blue_tbj_downregulated2<-data.frame(rbind(as.matrix(Red_vs_Blue_tbj_downregulated2), as.matrix(Red_vs_Blue_tbj_downregulated["Timer_protein",])))
+Red_vs_Blue_tbj_downregulated2$log2FoldChange<- as.double(Red_vs_Blue_tbj_downregulated2$log2FoldChange)
+Red_vs_Blue_tbj_downregulated2$padj<- as.double(Red_vs_Blue_tbj_downregulated2$padj)
+
+volcano_3<-ggplot(joined_Red_vs_Blue_table_tbj_test, aes(x=log2FoldChange, y=-log10(padj)))+
+  geom_point(aes(colour = cols),alpha=0.4, size=1)+
+  scale_colour_manual(name = 'cols', values = c("ns"="grey", "Down-regulated"="#73A1F3", "Up-regulated"="orange2"))+
+  geom_text_repel(data=Red_vs_Blue_tbj_downregulated2,
+            aes(log2FoldChange, 
+                -log10(padj), 
+                label=SYMBOL),
+            nudge_y=0.05, 
+            segment.size=0.2,
+            cex=4,
+            segment.alpha=0.4,
+            max.overlaps = 30)+
+    geom_text_repel(data=Red_vs_Blue_tbj_upregulated2,
+            aes(log2FoldChange, 
+                -log10(padj), 
+                label=SYMBOL),
+            cex=4, 
+            segment.size=0.2,
+            segment.alpha=0.4,
+            max.overlaps = 30,
+            nudge_x=2)+
+  ylim(0, 350)+
+  xlim(-12, 16)+
+  labs(title="<span style='font-size:12pt'>Blue to Red in 3.60</span>",
+       x="<span style='font-size:12pt'><br>Log<sub>2</sub> fold change</span>",
+       y="<span style='font-size:12pt'><br>-log<sub>10</sub> adjusted p-value</span>")+
+  geom_vline(xintercept=0, color="darkgrey", linetype=2)+
+  theme_bw()+ 
+  theme(legend.title=element_blank(),
+        axis.title.y=element_markdown(family="Arial"),
+        axis.title.x=element_markdown(family="Arial"),
+        plot.title=element_markdown(family = "Arial"),
+        axis.text = element_text(size = 12),
+        text=element_text(family="Arial", size=12)
+        )
+volcano_3
+
+
+
+```
+
+### TBX4B volcano plot Blue to Red
+
+```{r eval=FALSE, fig.height=9, fig.width=9, message=FALSE, warning=FALSE, include=FALSE}
+
+library(EnhancedVolcano)
+# Red_vs_Blue_tbx_padj <- joined_Red_vs_Blue_table_tbx%>%
+#   filter(padj<0.01)%>%
+#   arrange(padj)
+# Red_vs_Blue_tbx_padj<-Red_vs_Blue_tbx_padj[1:50,]
+Red_vs_Blue_tbx_upregulated <- joined_Red_vs_Blue_table_tbx%>%
+  filter(padj<0.01)%>%
+  filter(log2FoldChange>0)%>%
+  arrange(desc(log2FoldChange))%>%
+  arrange(padj)
+
+Red_vs_Blue_tbx_upregulated<-Red_vs_Blue_tbx_upregulated[1:10,]
+
+
+
+Red_vs_Blue_tbx_downregulated <- joined_Red_vs_Blue_table_tbx%>%
+  filter(padj<0.01)%>%
+  filter(log2FoldChange<0)%>%
+  arrange(log2FoldChange)%>%
+  arrange(padj)
+Red_vs_Blue_tbx_downregulated<-Red_vs_Blue_tbx_downregulated[1:10,]
+
+labs<-c(row.names(Red_vs_Blue_tbx_upregulated), row.names(Red_vs_Blue_tbx_downregulated))
+labs<-gene_names_rsem$hgnc_symbol[match(labs, gene_names_rsem$ensembl_gene_id)]
+keyvals <- ifelse(
+    joined_Red_vs_Blue_table_tbx$padj > 0.01, "grey",
+    ifelse(joined_Red_vs_Blue_table_tbx$log2FoldChange < 0, 'royalblue',
+      ifelse(joined_Red_vs_Blue_table_tbx$log2FoldChange > 0, 'orange2',
+        'grey')))
+keyvals[is.na(keyvals)] <- 'grey'
+names(keyvals)[keyvals == 'orange2'] <- 'Up-regulated'
+names(keyvals)[keyvals == 'royalblue'] <- 'Down-regulated'
+names(keyvals)[keyvals == 'grey'] <- 'ns'
+
+volcano_4<-EnhancedVolcano(joined_Red_vs_Blue_table_tbx,
+                lab = (joined_Red_vs_Blue_table_tbx$SYMBOL),
+                x = 'log2FoldChange',
+                y = 'padj',
+                ylab = bquote(~-Log[10]~italic(P-adjusted)),
+                xlim = c(-10, 10),
+                ylim = c(0, 120),
+                title = 'Blue to Red in TBX4B',
+                pCutoff = 0.01,
+                FCcutoff = 0,
+                pointSize = 1,
+                caption="",
+                selectLab = labs,
+                labSize = 5,
+                drawConnectors = TRUE,
+                arrowheads = F,
+                maxoverlapsConnectors = 35,
+                colCustom = keyvals,
+                widthConnectors = 0.15) + labs(y= "-log10 adjusted p-value", subtitle=NULL) +
+  theme(plot.title = element_text(size=12), 
+        axis.title=element_text(size=12), 
+        axis.title.y = element_blank(),
+        text=element_text(family="Arial", size=12))
+
+volcano_4
+
+```
+
+```{r echo=F, fig.height=5, fig.width=9}
+
+
+
+joined_Red_vs_Blue_table_tbx_test<-joined_Red_vs_Blue_table_tbx%>%
+  na.omit
+
+color_list <- ifelse(
+    joined_Red_vs_Blue_table_tbx_test$padj > 0.01, "ns",
+    ifelse(joined_Red_vs_Blue_table_tbx_test$log2FoldChange < 0, 'Down-regulated',
+      ifelse(joined_Red_vs_Blue_table_tbx_test$log2FoldChange > 0, 'Up-regulated',
+        'grey')))
+joined_Red_vs_Blue_table_tbx_test$cols<-color_list
+
+Red_vs_Blue_tbx_upregulated <- joined_Red_vs_Blue_table_tbx_test%>%
+  filter(padj<0.01)%>%
+  filter(log2FoldChange>0)%>%
+  arrange(desc(log2FoldChange))%>%
+  arrange(padj)
+
+Red_vs_Blue_tbx_upregulated2<-Red_vs_Blue_tbx_upregulated[1:10,]
+
+Red_vs_Blue_tbx_upregulated$log2FoldChange<- as.double(Red_vs_Blue_tbx_upregulated$log2FoldChange)
+Red_vs_Blue_tbx_upregulated$padj<- as.double(Red_vs_Blue_tbx_upregulated$padj)
+
+
+Red_vs_Blue_tbx_downregulated <- joined_Red_vs_Blue_table_tbx_test%>%
+  filter(padj<0.01)%>%
+  filter(log2FoldChange<0)%>%
+  arrange(log2FoldChange)%>%
+  arrange(padj)
+Red_vs_Blue_tbx_downregulated<-Red_vs_Blue_tbx_downregulated[1:10,]
+
+volcano_4<-ggplot(joined_Red_vs_Blue_table_tbx_test, aes(x=log2FoldChange, y=-log10(padj)))+
+  geom_point(aes(colour = cols),alpha=0.4, size=1)+
+  scale_colour_manual(name = 'cols', values = c("ns"="grey", "Down-regulated"="#73A1F3", "Up-regulated"="orange2"))+
+  geom_text_repel(data=Red_vs_Blue_tbx_downregulated,
+            aes(log2FoldChange, 
+                -log10(padj), 
+                label=SYMBOL),
+            nudge_y=5, 
+            cex=4,
+            segment.size=0.2,
+            max.overlaps = 30,
+            segment.alpha=0.4)+
+    geom_text_repel(data=Red_vs_Blue_tbx_upregulated2,
+            aes(log2FoldChange, 
+                -log10(padj), 
+                label=SYMBOL),
+            cex=4, 
+            segment.size=0.2,
+            segment.alpha=0.4,
+            max.overlaps = 30,
+            nudge_x=2,
+            nudge_y=1)+
+  ylim(0, 130)+
+  xlim(-12, 10)+
+  labs(title="<span style='font-size:12pt'>Blue to Red in TBX4B</span>",
+       x="<span style='font-size:12pt'><br>Log<sub>2</sub> fold change</span>")+
+  geom_vline(xintercept=0, color="darkgrey", linetype=2)+
+  theme_bw()+ 
+  theme(legend.title=element_blank(),
+        axis.title.y=element_blank(),
+        axis.title.x=element_markdown(family="Arial"),
+        plot.title=element_markdown(family = "Arial"),
+        axis.text = element_text(size = 12),
+        text=element_text(family="Arial", size=12)
+        )
+volcano_4
+
+
+
+```
+
+# S2 Fig - volcano plots
+
+```{r echo=FALSE, fig.height=10, fig.width=12, message=FALSE, warning=FALSE}
+
+# png("./plots/Volcano_plots.png", family="Arial", width = 16, height = 15, units = "in", res=300)
+(volcano_1|volcano_2)/(volcano_3|volcano_4)+plot_layout(guides="collect")
+
+pdf("./images/S2_fig.pdf", height = 10, width = 12,
+           family = "Arial", fonts="Arial", paper = "special", onefile = FALSE)
+(volcano_1|volcano_2)/(volcano_3|volcano_4)+plot_layout(guides="collect")
+dev.off()
+
+```
+
+# S3 Fig  - Gene plots
+
+```{r echo=F, fig.height=6, fig.width=11}
+
+
+pdf("./images/S3_fig.pdf", height = 6, width = 11,
+           family = "Arial", fonts="Arial", paper = "special", onefile = FALSE)
+
+(plotcounts_both_rsem_log_with_significance("ENSG00000185591")+theme(legend.position = "none")|
+  (plotcounts_both_rsem_log_with_significance("ENSG00000232810")+theme(legend.position = "none",axis.title.y=element_blank()))|
+  plotcounts_both_rsem_log_with_significance("ENSG00000100344")+theme(axis.title.y=element_blank())+theme(legend.position = "none")|
+  (plotcounts_both_rsem_log_with_significance("ENSG00000100644")+theme(axis.title.y=element_blank())+theme(legend.position = "none")))/
+  ((plotcounts_both_rsem_log_with_significance("ENSG00000145649")+theme(axis.title.y=element_blank())+theme(legend.position = "none"))|
+  (plotcounts_both_rsem_log_with_significance("ENSG00000100453")+theme(axis.title.y=element_blank())+theme(legend.position = "none"))|
+  (plotcounts_both_rsem_log_with_significance("ENSG00000114166")+theme(axis.title.y=element_blank())+theme(legend.position = "none"))|
+  (plotcounts_both_rsem_log_with_significance("ENSG00000106546")+theme(axis.title.y=element_blank())+theme(legend.position = "none")))/
+  ((plotcounts_both_rsem_log_with_significance("ENSG00000143437")+theme(axis.title.y=element_blank())+theme(legend.position = "none"))|
+     (plotcounts_both_rsem_log_with_significance("ENSG00000140465")+theme(axis.title.y=element_blank())+theme(legend.position = "none"))|
+     (plotcounts_both_rsem_log_with_significance("ENSG00000138061")+theme(axis.title.y=element_blank())+theme(legend.position = "none"))|
+  (plotcounts_both_rsem_log_with_significance("ENSG00000181019")+theme(axis.title.y=element_blank())))
+
+
+dev.off()
+
+# dev.off()
+
+```
+
+# S4 Fig - Result plots joined
+
+```{r echo=F, fig.height=10, fig.width=11}
+
+Part1 <- trajectories_tbj/trajectories_tbx
+Part2 <- plot1.2/plot2.2/tbx_plot1.2/tbx_plot2.2 + plot_layout(heights = c(1.3,1.3,2.3,0.6))
+
+
+(Part1|Part2) + plot_annotation(tag_levels = list(c('A', 'C', 'B', '', 'D'))) + plot_layout(widths=c(1.8,1))
+
+# pdf("./images/S4.pdf", height = 10, width = 11,
+#            family = "Arial", fonts="Arial", paper = "special", onefile = FALSE)
+# (Part1|Part2) + plot_annotation(tag_levels = list(c('A', 'C', 'B', '', 'D'))) + plot_layout(widths=c(1.8,1))
+# dev.off()
+```
+
+sessionInfo()
+R version 4.1.2 (2021-11-01)
+Platform: x86_64-pc-linux-gnu (64-bit)
+Running under: Ubuntu 18.04.6 LTS
+
+Matrix products: default
+BLAS:   /usr/lib/x86_64-linux-gnu/blas/libblas.so.3.7.1
+LAPACK: /usr/lib/x86_64-linux-gnu/lapack/liblapack.so.3.7.1
+
+locale:
+ [1] LC_CTYPE=en_US.UTF-8       LC_NUMERIC=C               LC_TIME=en_GB.UTF-8        LC_COLLATE=en_US.UTF-8    
+ [5] LC_MONETARY=en_GB.UTF-8    LC_MESSAGES=en_US.UTF-8    LC_PAPER=en_GB.UTF-8       LC_NAME=C                 
+ [9] LC_ADDRESS=C               LC_TELEPHONE=C             LC_MEASUREMENT=en_GB.UTF-8 LC_IDENTIFICATION=C       
+
+attached base packages:
+[1] stats4    stats     graphics  grDevices utils     datasets  methods   base     
+
+other attached packages:
+ [1] remotes_2.4.2               extrafont_0.17              ggtext_0.1.1                PCAtools_2.6.0             
+ [5] ggrepel_0.9.1               tibble_3.1.6                tidyr_1.2.0                 gprofiler2_0.2.1           
+ [9] patchwork_1.1.1             ggplot2_3.3.5               ashr_2.2-54                 dplyr_1.0.8                
+[13] magrittr_2.0.3              tximport_1.22.0             BiocManager_1.30.16         DESeq2_1.34.0              
+[17] SummarizedExperiment_1.24.0 Biobase_2.54.0              MatrixGenerics_1.6.0        matrixStats_0.61.0         
+[21] GenomicRanges_1.46.1        GenomeInfoDb_1.30.1         IRanges_2.28.0              S4Vectors_0.32.4           
+[25] BiocGenerics_0.40.0         biomaRt_2.50.3             
+
+loaded via a namespace (and not attached):
+  [1] colorspace_2.0-3          ellipsis_0.3.2            markdown_1.1              XVector_0.34.0           
+  [5] gridtext_0.1.4            farver_2.1.0              bit64_4.0.5               AnnotationDbi_1.56.2     
+  [9] fansi_1.0.3               xml2_1.3.3                splines_4.1.2             sparseMatrixStats_1.6.0  
+ [13] cachem_1.0.6              geneplotter_1.72.0        knitr_1.38                jsonlite_1.8.0           
+ [17] Rttf2pt1_1.3.10           annotate_1.72.0           dbplyr_2.1.1              png_0.1-7                
+ [21] compiler_4.1.2            httr_1.4.2                dqrng_0.3.0               lazyeval_0.2.2           
+ [25] assertthat_0.2.1          Matrix_1.4-1              fastmap_1.1.0             cli_3.2.0                
+ [29] BiocSingular_1.10.0       htmltools_0.5.2           prettyunits_1.1.1         tools_4.1.2              
+ [33] rsvd_1.0.5                gtable_0.3.0              glue_1.6.2                GenomeInfoDbData_1.2.7   
+ [37] reshape2_1.4.4            rappdirs_0.3.3            Rcpp_1.0.8.3              vctrs_0.4.0              
+ [41] Biostrings_2.62.0         extrafontdb_1.0           DelayedMatrixStats_1.16.0 xfun_0.30                
+ [45] stringr_1.4.0             beachmat_2.10.0           lifecycle_1.0.1           irlba_2.3.5              
+ [49] XML_3.99-0.9              zlibbioc_1.40.0           scales_1.1.1              hms_1.1.1                
+ [53] parallel_4.1.2            RColorBrewer_1.1-3        yaml_2.3.5                curl_4.3.2               
+ [57] memoise_2.0.1             yulab.utils_0.0.4         stringi_1.7.6             RSQLite_2.2.12           
+ [61] SQUAREM_2021.1            genefilter_1.76.0         ScaledMatrix_1.2.0        filelock_1.0.2           
+ [65] BiocParallel_1.28.3       truncnorm_1.0-8           rlang_1.0.2               pkgconfig_2.0.3          
+ [69] bitops_1.0-7              evaluate_0.15             lattice_0.20-45           invgamma_1.1             
+ [73] purrr_0.3.4               labeling_0.4.2            htmlwidgets_1.5.4         cowplot_1.1.1            
+ [77] bit_4.0.4                 tidyselect_1.1.2          plyr_1.8.7                R6_2.5.1                 
+ [81] generics_0.1.2            DelayedArray_0.20.0       DBI_1.1.2                 pillar_1.7.0             
+ [85] withr_2.5.0               survival_3.3-1            KEGGREST_1.34.0           RCurl_1.98-1.6           
+ [89] mixsqp_0.3-43             crayon_1.5.1              utf8_1.2.2                BiocFileCache_2.2.1      
+ [93] plotly_4.10.0             rmarkdown_2.13            progress_1.2.2            locfit_1.5-9.5           
+ [97] grid_4.1.2                data.table_1.14.2         blob_1.2.3                digest_0.6.29            
+[101] xtable_1.8-4              gridGraphics_0.5-1        munsell_0.5.0             viridisLite_0.4.0        
+[105] ggplotify_0.1.0   
